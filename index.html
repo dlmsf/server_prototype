@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Interactive Embedded Map - Vanilla JS</title>
+<style>
+  #map-container {
+    position: relative;
+    width: 100%;
+    height: 400px;
+    margin-top: 20px;
+    border: 1px solid #ccc;
+  }
+  iframe {
+    width: 100%;
+    height: 100%;
+    border: none;
+  }
+  #map-overlay {
+    position: absolute;
+    top: 0; left: 0;
+    width: 100%;
+    height: 100%;
+    cursor: crosshair;
+    z-index: 10;
+  }
+  .marker {
+    position: absolute;
+    width: 12px;
+    height: 12px;
+    background: red;
+    border-radius: 50%;
+    border: 2px solid white;
+    transform: translate(-50%, -50%);
+    pointer-events: none; /* marker doesn't interfere with clicks */
+  }
+  #controls {
+    margin-top: 15px;
+  }
+  #pointsList {
+    margin-top: 10px;
+    max-height: 150px;
+    overflow-y: auto;
+    font-family: monospace;
+    background: #f9f9f9;
+    border: 1px solid #ddd;
+    padding: 8px;
+  }
+</style>
+</head>
+<body>
+
+<h1>Interactive Embedded Map (Vanilla JS)</h1>
+<button id="showMapBtn">Show My Location on Map</button>
+
+<div id="map-container" style="display:none;">
+  <iframe
+    id="mapIframe"
+    src=""
+    allowfullscreen
+  ></iframe>
+  <div id="map-overlay" title="Click to add point" style="display:none;"></div>
+</div>
+
+<div id="controls" style="display:none;">
+  <button id="addPointBtn">Add Point</button>
+  <button id="clearPointsBtn">Clear Points</button>
+  <div id="pointsList">No points added yet.</div>
+</div>
+
+<script>
+  const showMapBtn = document.getElementById('showMapBtn');
+  const mapContainer = document.getElementById('map-container');
+  const mapIframe = document.getElementById('mapIframe');
+  const mapOverlay = document.getElementById('map-overlay');
+  const controls = document.getElementById('controls');
+  const addPointBtn = document.getElementById('addPointBtn');
+  const clearPointsBtn = document.getElementById('clearPointsBtn');
+  const pointsList = document.getElementById('pointsList');
+
+  let userLat, userLon;
+  let addingPoint = false;
+  let points = [];
+
+  showMapBtn.addEventListener('click', () => {
+    if (!navigator.geolocation) {
+      alert('Geolocation not supported');
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        userLat = pos.coords.latitude;
+        userLon = pos.coords.longitude;
+
+        // Calculate bbox for embed
+        const bboxSize = 0.02; // degrees ~ zoom level
+        const left = userLon - bboxSize/2;
+        const right = userLon + bboxSize/2;
+        const top = userLat + bboxSize/2;
+        const bottom = userLat - bboxSize/2;
+
+        // Build embed URL
+        const embedUrl = `https://www.openstreetmap.org/export/embed.html?bbox=${left}%2C${bottom}%2C${right}%2C${top}&layer=mapnik`;
+
+        mapIframe.src = embedUrl;
+
+        mapContainer.style.display = 'block';
+        controls.style.display = 'block';
+        mapOverlay.style.display = 'none'; // hidden initially
+
+        // Reset state
+        points = [];
+        pointsList.textContent = 'No points added yet.';
+      },
+      (err) => alert('Error getting location: ' + err.message)
+    );
+  });
+
+  // Add point button: toggles addingPoint mode
+  addPointBtn.addEventListener('click', () => {
+    addingPoint = !addingPoint;
+    if (addingPoint) {
+      addPointBtn.textContent = 'Click on map to add point (Click again to cancel)';
+      mapOverlay.style.display = 'block';
+    } else {
+      addPointBtn.textContent = 'Add Point';
+      mapOverlay.style.display = 'none';
+    }
+  });
+
+  clearPointsBtn.addEventListener('click', () => {
+    points = [];
+    updatePointsUI();
+    // Remove markers from overlay
+    const markers = mapOverlay.querySelectorAll('.marker');
+    markers.forEach(m => m.remove());
+  });
+
+  // Convert screen xy on overlay to lat/lon
+  // Approximate based on bbox used in iframe URL and overlay size
+  function xyToLatLon(x, y) {
+    const rect = mapOverlay.getBoundingClientRect();
+
+    // Normalized coords 0-1 inside overlay
+    const nx = x / rect.width;
+    const ny = y / rect.height;
+
+    // bbox limits same as before
+    const bboxSize = 0.02;
+    const left = userLon - bboxSize/2;
+    const right = userLon + bboxSize/2;
+    const top = userLat + bboxSize/2;
+    const bottom = userLat - bboxSize/2;
+
+    // lon interpolated left -> right
+    const lon = left + nx * (right - left);
+
+    // lat interpolated top -> bottom (y=0 is top)
+    const lat = top - ny * (top - bottom);
+
+    return { lat, lon };
+  }
+
+  // Place marker visually on overlay
+  function placeMarker(x, y) {
+    const marker = document.createElement('div');
+    marker.className = 'marker';
+    marker.style.left = `${x}px`;
+    marker.style.top = `${y}px`;
+    mapOverlay.appendChild(marker);
+  }
+
+  // Update points list UI
+  function updatePointsUI() {
+    if (points.length === 0) {
+      pointsList.textContent = 'No points added yet.';
+      return;
+    }
+    pointsList.innerHTML = points.map((p, i) =>
+      `<div>Point ${i + 1}: Lat ${p.lat.toFixed(6)}, Lon ${p.lon.toFixed(6)}</div>`
+    ).join('');
+  }
+
+  // Listen to clicks on the overlay div to add points
+  mapOverlay.addEventListener('click', (e) => {
+    if (!addingPoint) return;
+
+    // Get click relative to overlay top-left corner
+    const rect = mapOverlay.getBoundingClientRect();
+    const clickX = e.clientX - rect.left;
+    const clickY = e.clientY - rect.top;
+
+    const { lat, lon } = xyToLatLon(clickX, clickY);
+
+    points.push({ lat, lon });
+
+    placeMarker(clickX, clickY);
+    updatePointsUI();
+
+    // Optionally disable adding point mode after one click
+    addingPoint = false;
+    addPointBtn.textContent = 'Add Point';
+    mapOverlay.style.display = 'none';
+  });
+</script>
+
+</body>
+</html>
